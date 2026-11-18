@@ -1,0 +1,10 @@
+name: Setup
+description: Set up the Go toolchain configured for this repository.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      with:
+        go-version-file: 'go.mod'
+        # Saving the build cache (~600 MB) takes minutes on our runners, a cold build only seconds.
+        cache: false
