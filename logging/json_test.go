@@ -3,6 +3,7 @@ package logging
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -87,4 +88,126 @@ var _ = Describe("codesphere JSON handler", func() {
 		Expect(line).To(HaveKeyWithValue("message", "connected db.host=pg"))
 		Expect(line).NotTo(HaveKey("db"))
 	})
+
+	Describe("attribute values", func() {
+		It("value without spaces, equals signs, quotes or control characters -> unquoted", func() {
+			logger.Info("login", "user", "jane")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "login user=jane"))
+		})
+
+		It("error with spaces -> quoted, so the next attribute stays separate", func() {
+			logger.Error("failed", "error", errors.New("dial tcp: connection refused"), "user", "x")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", `failed error="dial tcp: connection refused" user=x`))
+		})
+
+		It("value forging a key=value pair -> quoted, so it stays one value", func() {
+			logger.Info("x", "name", "a level=40 b=c")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", `x name="a level=40 b=c"`))
+		})
+
+		It("value with a newline and quotes -> escaped inside quotes", func() {
+			logger.Info("x", "name", "1\n\"level\":40")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", `x name="1\n\"level\":40"`))
+		})
+
+		It("empty value -> empty quotes", func() {
+			logger.Info("x", "name", "")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", `x name=""`))
+		})
+
+		It("record attribute with a redacting LogValuer -> redacted value", func() {
+			logger.Info("login", "token", redactedToken("hunter2"))
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "login token=[REDACTED]"))
+		})
+
+		It("bound attribute with a redacting LogValuer -> redacted value", func() {
+			logger.With("token", redactedToken("hunter2")).Info("login")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "login token=[REDACTED]"))
+		})
+	})
+
+	Describe("groups", func() {
+		It("group attribute -> members flattened with the group as prefix", func() {
+			logger.Info("connected", slog.Group("db", "host", "pg", "port", 5432))
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "connected db.host=pg db.port=5432"))
+		})
+
+		It("group attribute under a logger group -> both prefixes", func() {
+			logger.WithGroup("app").Info("connected", slog.Group("db", "host", "pg"))
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "connected app.db.host=pg"))
+		})
+
+		It("group attribute holding a redacting LogValuer -> member redacted and prefixed", func() {
+			logger.Info("login", slog.Group("client", "token", redactedToken("hunter2"), "user", "x"))
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "login client.token=[REDACTED] client.user=x"))
+		})
+
+		It("LogValuer resolving to a group -> members flattened with the key as prefix", func() {
+			logger.Info("login", "client", client{user: "x"})
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "login client.user=x client.token=[REDACTED]"))
+		})
+
+		It("group attribute without a name -> members inlined", func() {
+			logger.Info("x", slog.Group("", "a", 1))
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "x a=1"))
+		})
+
+		It("empty group attribute -> left out", func() {
+			logger.Info("x", slog.Group("db"))
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "x"))
+		})
+
+		It("handler group with an empty name -> handler unchanged", func() {
+			slog.New(newCodesphereJSONHandler(out).WithGroup("")).Info("connected", "host", "pg")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "connected host=pg"))
+		})
+	})
+
+	Describe("empty attributes", func() {
+		It("zero attribute -> left out", func() {
+			logger.Info("x", slog.Attr{})
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "x"))
+		})
+
+		It("attribute with an empty key -> left out", func() {
+			logger.Info("x", "", "v")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "x"))
+		})
+
+		It("bound zero attribute -> left out", func() {
+			logger.With(slog.Attr{}).Info("x")
+
+			Expect(decodeLine()).To(HaveKeyWithValue("message", "x"))
+		})
+	})
 })
+
+type redactedToken string
+
+func (redactedToken) LogValue() slog.Value {
+	return slog.StringValue("[REDACTED]")
+}
+
+type client struct {
+	user string
+}
+
+func (c client) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("user", c.user), slog.Any("token", redactedToken("hunter2")))
+}

@@ -2,11 +2,13 @@ package logging
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Numeric levels of the Codesphere JSON log format,
@@ -58,8 +60,8 @@ func toCodesphereLevel(level slog.Level) int {
 // The log pipeline (Grafana Alloy) keeps only message and stack of a JSON line,
 // so attributes go into the message:
 //
-//	logger.With("component", "api").WithGroup("db").Info("connected", "host", "pg")
-//	// {"date":"…","level":20,"message":"connected component=api db.host=pg"}
+//	logger.With("component", "api").WithGroup("db").Info("connected", "host", "pg", "user", "jane doe")
+//	// {"date":"…","level":20,"message":"connected component=api db.host=pg db.user=\"jane doe\""}
 type attrsInMessageHandler struct {
 	inner       slog.Handler
 	boundAttrs  string
@@ -75,24 +77,67 @@ func (h attrsInMessageHandler) Handle(ctx context.Context, record slog.Record) e
 	message.WriteString(record.Message)
 	message.WriteString(h.boundAttrs)
 	record.Attrs(func(attr slog.Attr) bool {
-		message.WriteString(h.formatAttr(attr))
+		writeAttr(&message, h.groupPrefix, attr)
 		return true
 	})
 	return h.inner.Handle(ctx, slog.NewRecord(record.Time, record.Level, message.String(), record.PC))
 }
 
 func (h attrsInMessageHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	var bound strings.Builder
+	bound.WriteString(h.boundAttrs)
 	for _, attr := range attrs {
-		h.boundAttrs += h.formatAttr(attr)
+		writeAttr(&bound, h.groupPrefix, attr)
 	}
+	h.boundAttrs = bound.String()
 	return h
 }
 
+// An empty name returns the handler unchanged, as the slog.Handler contract requires.
 func (h attrsInMessageHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
 	h.groupPrefix += name + "."
 	return h
 }
 
-func (h attrsInMessageHandler) formatAttr(attr slog.Attr) string {
-	return fmt.Sprintf(" %s%s=%v", h.groupPrefix, attr.Key, attr.Value)
+// writeAttr follows the slog.Handler contract and slog's text handler:
+// values are resolved first, so a type whose LogValue redacts it stays redacted,
+// groups are flattened into prefixed keys,
+// groups without a name are inlined,
+// attributes without a key are left out,
+// and values are quoted when they would otherwise be ambiguous.
+func writeAttr(message *strings.Builder, prefix string, attr slog.Attr) {
+	value := attr.Value.Resolve()
+	if value.Kind() == slog.KindGroup {
+		if attr.Key != "" {
+			prefix += attr.Key + "."
+		}
+		for _, member := range value.Group() {
+			writeAttr(message, prefix, member)
+		}
+		return
+	}
+	if attr.Key == "" {
+		return
+	}
+	message.WriteString(" ")
+	message.WriteString(prefix)
+	message.WriteString(attr.Key)
+	message.WriteString("=")
+	message.WriteString(quoteIfNeeded(value.String()))
+}
+
+// Values are quoted by the same rule as slog's text handler,
+// so a value with spaces stays one value,
+// and a value that comes from a client cannot forge key=value pairs or line breaks.
+func quoteIfNeeded(value string) string {
+	needsQuoting := value == "" || !utf8.ValidString(value) || strings.IndexFunc(value, func(r rune) bool {
+		return r == ' ' || r == '=' || r == '"' || !unicode.IsPrint(r)
+	}) >= 0
+	if needsQuoting {
+		return strconv.Quote(value)
+	}
+	return value
 }
