@@ -1,29 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "github>codesphere-cloud/renovate-config"
-  ],
-  "minimumReleaseAge": "3 days",
-  "vulnerabilityAlerts": {
-    "minimumReleaseAge": null
-  },
-  "packageRules": [
-    {
-      "description": "Auto-merge Go modules and GitHub Action digests once CI is green",
-      "matchManagers": ["gomod", "github-actions"],
-      "automerge": true
-    },
-    {
-      "description": "No bake time for pinning, it locks to versions already in use",
-      "matchUpdateTypes": ["pin", "pinDigest"],
-      "minimumReleaseAge": null
-    },
-    {
-      "description": "Indirect Go modules are skipped by default, but they still carry CVEs. Grouped so they land as one auto-merged PR instead of one per module",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["indirect"],
-      "enabled": true,
-      "groupName": "indirect Go modules"
-    }
-  ]
+  "extends": ["github>codesphere-cloud/renovate-config:go-config"]
 }
