@@ -1,0 +1,14 @@
+version: "2"
+
+linters:
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: log$
+              desc: use log/slog, every log line needs a level
+    staticcheck:
+      dot-import-whitelist: ["github.com/onsi/ginkgo/v2", "github.com/onsi/gomega"]
