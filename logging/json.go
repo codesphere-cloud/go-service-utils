@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Numeric levels of the Codesphere JSON log format,
@@ -18,6 +20,13 @@ const (
 	codesphereLevelInfo    = 20
 	codesphereLevelWarning = 30
 	codesphereLevelError   = 40
+)
+
+// Field names of the span a record was logged in,
+// the ones the TypeScript services write.
+const (
+	traceIdKey = "traceId"
+	spanIdKey  = "spanId"
 )
 
 // NewJSONHandler returns a handler that writes the Codesphere JSON log format to stdout:
@@ -58,10 +67,12 @@ func toCodesphereLevel(level slog.Level) int {
 }
 
 // The log pipeline (Grafana Alloy) keeps only message and stack of a JSON line,
-// so attributes go into the message:
+// plus traceId and spanId as metadata,
+// so attributes go into the message,
+// and the ids of the span in the record's context get fields of their own:
 //
-//	logger.With("component", "api").WithGroup("db").Info("connected", "host", "pg", "user", "jane doe")
-//	// {"date":"…","level":20,"message":"connected component=api db.host=pg db.user=\"jane doe\""}
+//	logger.With("component", "api").WithGroup("db").InfoContext(ctx, "connected", "host", "pg", "user", "jane doe")
+//	// {"date":"…","level":20,"message":"connected component=api db.host=pg db.user=\"jane doe\"","traceId":"…","spanId":"…"}
 type attrsInMessageHandler struct {
 	inner       slog.Handler
 	boundAttrs  string
@@ -80,7 +91,9 @@ func (h attrsInMessageHandler) Handle(ctx context.Context, record slog.Record) e
 		writeAttr(&message, h.groupPrefix, attr)
 		return true
 	})
-	return h.inner.Handle(ctx, slog.NewRecord(record.Time, record.Level, message.String(), record.PC))
+	folded := slog.NewRecord(record.Time, record.Level, message.String(), record.PC)
+	folded.AddAttrs(traceAttrs(ctx)...)
+	return h.inner.Handle(ctx, folded)
 }
 
 func (h attrsInMessageHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -140,4 +153,15 @@ func quoteIfNeeded(value string) string {
 		return strconv.Quote(value)
 	}
 	return value
+}
+
+func traceAttrs(ctx context.Context) []slog.Attr {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() {
+		return nil
+	}
+	return []slog.Attr{
+		slog.String(traceIdKey, spanContext.TraceID().String()),
+		slog.String(spanIdKey, spanContext.SpanID().String()),
+	}
 }

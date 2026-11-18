@@ -8,6 +8,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var _ = Describe("codesphere JSON handler", func() {
@@ -174,6 +175,52 @@ var _ = Describe("codesphere JSON handler", func() {
 			slog.New(newCodesphereJSONHandler(out).WithGroup("")).Info("connected", "host", "pg")
 
 			Expect(decodeLine()).To(HaveKeyWithValue("message", "connected host=pg"))
+		})
+	})
+
+	Describe("trace correlation", func() {
+		spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID:    trace.TraceID{0x0a, 0xf7, 0x65, 0x19, 0x16, 0xcd, 0x43, 0xdd, 0x84, 0x48, 0xeb, 0x21, 0x1c, 0x80, 0x31, 0x9c},
+			SpanID:     trace.SpanID{0xb7, 0xad, 0x6b, 0x71, 0x69, 0x20, 0x33, 0x31},
+			TraceFlags: trace.FlagsSampled,
+		})
+
+		It("span in context -> traceId and spanId as top-level hex fields", func() {
+			ctx := trace.ContextWithSpanContext(GinkgoT().Context(), spanContext)
+
+			logger.InfoContext(ctx, "connected")
+
+			line := decodeLine()
+			Expect(line).To(HaveKeyWithValue("message", "connected"))
+			Expect(line).To(HaveKeyWithValue("traceId", "0af7651916cd43dd8448eb211c80319c"))
+			Expect(line).To(HaveKeyWithValue("spanId", "b7ad6b7169203331"))
+		})
+
+		It("span in context under a group -> trace ids stay top-level, outside the message", func() {
+			ctx := trace.ContextWithSpanContext(GinkgoT().Context(), spanContext)
+
+			logger.WithGroup("db").InfoContext(ctx, "connected", "host", "pg")
+
+			line := decodeLine()
+			Expect(line).To(HaveKeyWithValue("message", "connected db.host=pg"))
+			Expect(line).To(HaveKeyWithValue("traceId", "0af7651916cd43dd8448eb211c80319c"))
+			Expect(line).NotTo(HaveKey("db"))
+		})
+
+		It("no span in context -> no trace fields", func() {
+			logger.InfoContext(GinkgoT().Context(), "connected")
+
+			line := decodeLine()
+			Expect(line).NotTo(HaveKey("traceId"))
+			Expect(line).NotTo(HaveKey("spanId"))
+		})
+
+		It("invalid span context -> no trace fields", func() {
+			ctx := trace.ContextWithSpanContext(GinkgoT().Context(), trace.SpanContext{})
+
+			logger.InfoContext(ctx, "connected")
+
+			Expect(decodeLine()).NotTo(HaveKey("traceId"))
 		})
 	})
 

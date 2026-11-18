@@ -11,7 +11,7 @@ Do not put anything internal in it: code, comments, test data and commit message
 
 ## Packages
 
-- [`logging`](logging): `log/slog` handlers, JSON lines in the Codesphere log format, or readable text for local development, selected by `LOG_FORMAT`.
+- [`logging`](logging): `log/slog` handlers, JSON lines in the Codesphere log format with the trace and span id of the record, or readable text for local development, selected by `LOG_FORMAT`.
 
 ## Development
 
