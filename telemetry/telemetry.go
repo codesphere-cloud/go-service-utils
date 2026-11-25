@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -36,6 +37,13 @@ type Options struct {
 // The exporters read their configuration from the OTEL_EXPORTER_OTLP_* environment variables.
 // They append the per-signal path, /v1/traces and /v1/metrics, to OTEL_EXPORTER_OTLP_ENDPOINT.
 // Spans are exported in batches, metrics periodically.
+//
+// Init also sets the global propagator to W3C Trace Context and Baggage,
+// the format the Codesphere TypeScript services read and write.
+// Without it, the global propagator does nothing,
+// so instrumented HTTP clients send no traceparent header and servers start a new trace for every request.
+// The propagator takes effect only where code injects or extracts headers,
+// for example through otelhttp or otel.GetTextMapPropagator().Inject.
 //
 // The returned shutdown flushes pending telemetry and stops the exporters.
 // Call it before the process exits, or the last batch is lost.
@@ -68,6 +76,7 @@ func Init(ctx context.Context, opts Options) (shutdown func(context.Context) err
 	)
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetMeterProvider(meterProvider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
 	return func(ctx context.Context) error {
 		return errors.Join(tracerProvider.Shutdown(ctx), meterProvider.Shutdown(ctx))

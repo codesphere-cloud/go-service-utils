@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	collectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -89,6 +90,7 @@ func initWithCollector(ctx context.Context, opts telemetry.Options) (*collector,
 	server := httptest.NewServer(recorder)
 	DeferCleanup(server.Close)
 	GinkgoT().Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
 
 	shutdown, err := telemetry.Init(ctx, opts)
 	Expect(err).NotTo(HaveOccurred())
@@ -129,6 +131,18 @@ var _ = Describe("Init", func() {
 		attrs := recorder.ResourceAttributesOfSpans()
 		Expect(attrs).To(HaveKeyWithValue("service.name", "test-service"))
 		Expect(attrs).To(HaveKeyWithValue("service.instance.id", "test-instance"))
+	})
+
+	It("span in context, headers injected -> W3C traceparent with the span's trace id", func(ctx SpecContext) {
+		_, shutdown := initWithCollector(ctx, opts)
+		DeferCleanup(shutdown)
+		spanCtx, span := otel.Tracer("test").Start(ctx, "test-span")
+		defer span.End()
+		headers := http.Header{}
+
+		otel.GetTextMapPropagator().Inject(spanCtx, propagation.HeaderCarrier(headers))
+
+		Expect(headers.Get("traceparent")).To(ContainSubstring(span.SpanContext().TraceID().String()))
 	})
 
 	It("no views -> histogram exported with the default explicit buckets", func(ctx SpecContext) {

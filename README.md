@@ -12,7 +12,7 @@ Do not put anything internal in it: code, comments, test data and commit message
 ## Packages
 
 - [`logging`](logging): `log/slog` handlers, JSON lines in the Codesphere log format with the trace and span id of the record, or readable text for local development, selected by `LOG_FORMAT`.
-- [`telemetry`](telemetry): OpenTelemetry tracer and meter providers that export via OTLP/HTTP to the endpoint in `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- [`telemetry`](telemetry): OpenTelemetry tracer and meter providers that export via OTLP/HTTP to the endpoint in `OTEL_EXPORTER_OTLP_ENDPOINT`, and W3C Trace Context propagation.
 
 ## Development
 
